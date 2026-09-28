@@ -1,0 +1,16 @@
+{
+  "name": "replay-harness",
+  "version": "0.1.0",
+  "description": "Offline, keyboard-driven replays of coding agent sessions in the terminal.",
+  "type": "module",
+  "bin": { "replay-harness": "./bin/replay-harness.js" },
+  "scripts": {
+    "start": "node bin/replay-harness.js",
+    "demo": "node bin/replay-harness.js --demo codex",
+    "test": "node --test",
+    "check": "node --check bin/replay-harness.js && node --test"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT",
+  "files": ["bin", "src", "examples", "README.md", "LICENSE"]
+}

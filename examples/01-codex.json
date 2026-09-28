@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "harness": "codex",
+  "title": "Ship a command palette",
+  "description": "A three-turn product demo: inspect the app, build a command palette, then add keyboard navigation.",
+  "model": "gpt-5.4",
+  "cwd": "~/projects/atlas",
+  "turns": [
+    {
+      "prompt": "Take a look at this app. I want to add a command palette so users can jump to any page.",
+      "events": [
+        { "type": "assistant", "text": "I’ll check the app’s navigation and components, then add a command palette that fits the existing UI." },
+        { "type": "tool", "name": "exec_command", "id": "c1", "text": "rg --files src | head -12" },
+        { "type": "result", "id": "c1", "text": "src/app.tsx\nsrc/components/sidebar.tsx\nsrc/components/button.tsx\nsrc/lib/navigation.ts\nsrc/styles/globals.css" },
+        { "type": "tool", "name": "exec_command", "id": "c2", "text": "cat src/lib/navigation.ts" },
+        { "type": "result", "id": "c2", "text": "export const pages = [\n  { name: 'Overview', href: '/' },\n  { name: 'Projects', href: '/projects' },\n  { name: 'Activity', href: '/activity' },\n  { name: 'Settings', href: '/settings' },\n];" },
+        { "type": "assistant", "text": "The app has four pages and a shared navigation list. I’ll use that list to keep the palette in sync.\n\nThe palette will open with **⌘K**, filter as you type, and close with Escape." }
+      ]
+    },
+    {
+      "prompt": "Go ahead. Keep it small and make it feel native to the app.",
+      "events": [
+        { "type": "assistant", "text": "I’m adding the palette as a small component and connecting the global keyboard shortcut." },
+        { "type": "tool", "name": "apply_patch", "id": "c3", "text": "*** Add File: src/components/command-palette.tsx\n+export function CommandPalette() {\n+  const [query, setQuery] = useState('');\n+  const matches = pages.filter(page =>\n+    page.name.toLowerCase().includes(query.toLowerCase())\n+  );\n+  return <CommandDialog items={matches} onSearch={setQuery} />;\n+}" },
+        { "type": "result", "id": "c3", "text": "Success. Updated the following files:\nA src/components/command-palette.tsx\nM src/app.tsx" },
+        { "type": "tool", "name": "exec_command", "id": "c4", "text": "npm run build", "durationMs": 1200 },
+        { "type": "result", "id": "c4", "text": "vite building for production…\n✓ 42 modules transformed.\ndist/index.html                   0.46 kB\ndist/assets/index-Dh8sK.js        82.14 kB\n✓ built in 621ms" },
+        { "type": "assistant", "text": "The command palette is ready.\n\n- **⌘K** opens it from any page.\n- Search filters the existing navigation items.\n- Escape or clicking outside closes it.\n\nProduction build passes." }
+      ]
+    },
+    {
+      "prompt": "Add arrow-key navigation and make Enter open the selected page.",
+      "events": [
+        { "type": "assistant", "text": "I’ll keep the selection inside the filtered results and reset it whenever the search changes." },
+        { "type": "tool", "name": "apply_patch", "id": "c5", "text": "*** Update File: src/components/command-palette.tsx\n+onKeyDown={(event) => {\n+  if (event.key === 'ArrowDown') moveSelection(1);\n+  if (event.key === 'ArrowUp') moveSelection(-1);\n+  if (event.key === 'Enter') openSelected();\n+}}" },
+        { "type": "result", "id": "c5", "text": "Success. Updated src/components/command-palette.tsx" },
+        { "type": "tool", "name": "exec_command", "id": "c6", "text": "npm test -- command-palette", "durationMs": 800 },
+        { "type": "result", "id": "c6", "text": "✓ opens with the keyboard shortcut\n✓ filters pages as you type\n✓ arrow keys wrap through results\n✓ Enter opens the selected page\n✓ an empty result list is safe\n\n5 tests passed" },
+        { "type": "assistant", "text": "Done. **↑ / ↓** move the selection, **Enter** opens the page, and empty results don’t trigger navigation. All five interaction tests pass." }
+      ]
+    }
+  ]
+}

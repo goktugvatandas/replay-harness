@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "harness": "gemini",
+  "title": "Explain and improve a utility",
+  "description": "Inspect a date formatter, fix its empty state, and verify the result.",
+  "model": "Gemini 2.5 Pro",
+  "cwd": "~/projects/daybook",
+  "turns": [
+    {
+      "prompt": "Why does the date label show Invalid Date when a task has no due date?",
+      "events": [
+        { "type": "tool", "name": "read_file", "id": "g1", "text": "src/lib/format-date.ts" },
+        { "type": "result", "id": "g1", "text": "export function formatDate(value: string) {\n  return new Date(value).toLocaleDateString('en-GB');\n}" },
+        { "type": "assistant", "text": "The formatter passes an empty value directly to `new Date()`. An empty string produces an invalid date, which gets displayed as the label.\n\nAn early return can give undated tasks a useful label." }
+      ]
+    },
+    {
+      "prompt": "Show No due date for missing values. Handle malformed dates too.",
+      "events": [
+        { "type": "tool", "name": "replace", "id": "g2", "text": "src/lib/format-date.ts\n+export function formatDate(value?: string | null) {\n+  if (!value) return 'No due date';\n+  const date = new Date(value);\n+  if (Number.isNaN(date.getTime())) return 'No due date';\n+  return date.toLocaleDateString('en-GB');\n+}" },
+        { "type": "result", "id": "g2", "text": "Successfully modified src/lib/format-date.ts" },
+        { "type": "tool", "name": "run_shell_command", "id": "g3", "text": "npm test -- format-date", "durationMs": 850 },
+        { "type": "result", "id": "g3", "text": "✓ formats a valid date\n✓ handles undefined and null\n✓ handles an empty string\n✓ handles a malformed date\n\n4 tests passed" },
+        { "type": "assistant", "text": "Missing and malformed values now display **No due date**. Valid dates keep their existing format. All four tests pass." }
+      ]
+    }
+  ]
+}

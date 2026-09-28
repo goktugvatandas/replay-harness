@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "harness": "claude",
+  "title": "Fix a stubborn search bug",
+  "description": "Follow a focused debugging session, from reproduction to a passing regression test.",
+  "model": "Claude Sonnet 4.6",
+  "cwd": "~/projects/fieldnotes",
+  "turns": [
+    {
+      "prompt": "Search stops working when I type an uppercase letter. Can you find out why?",
+      "events": [
+        { "type": "assistant", "text": "I’ll trace the search filter and check how it compares the query with note titles." },
+        { "type": "tool", "name": "Grep", "id": "a1", "text": "pattern: filter|includes\npath: src/components/search.tsx" },
+        { "type": "result", "id": "a1", "text": "18: const results = notes.filter(note =>\n19:   note.title.toLowerCase().includes(query)\n20: );" },
+        { "type": "assistant", "text": "The filter lowercases each title, but leaves the query unchanged. Searching for `Hello` compares it with `hello`, so the match fails.\n\nI’ll normalize the query too and add a regression test." }
+      ]
+    },
+    {
+      "prompt": "Fix it, and handle accidental spaces around the query too.",
+      "events": [
+        { "type": "tool", "name": "Edit", "id": "a2", "text": "src/components/search.tsx\n-  note.title.toLowerCase().includes(query)\n+  note.title.toLowerCase().includes(query.trim().toLowerCase())" },
+        { "type": "result", "id": "a2", "text": "Updated src/components/search.tsx" },
+        { "type": "tool", "name": "Bash", "id": "a3", "text": "npm test -- search", "durationMs": 950 },
+        { "type": "result", "id": "a3", "text": "PASS src/components/search.test.tsx\n  ✓ matches lowercase queries\n  ✓ matches uppercase queries\n  ✓ ignores surrounding whitespace\n  ✓ shows all notes for an empty query\n\nTests: 4 passed, 4 total" },
+        { "type": "assistant", "text": "Fixed. Search now ignores letter case and surrounding spaces.\n\n`Hello`, `HELLO`, and ` hello ` all find the same notes. All four search tests pass." }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "harness": "opencode",
+  "title": "Build a tiny health endpoint",
+  "description": "Add a health check and verify its response, in two short turns.",
+  "model": "Recorded demo model",
+  "cwd": "~/projects/beacon",
+  "turns": [
+    {
+      "prompt": "Add a /health endpoint that returns the service name and status.",
+      "events": [
+        { "type": "assistant", "text": "I’ll add it alongside the existing routes and return a small JSON response." },
+        { "type": "tool", "name": "read", "id": "o1", "text": "src/server.ts" },
+        { "type": "result", "id": "o1", "text": "import { Hono } from 'hono';\nconst app = new Hono();\nexport default app;" },
+        { "type": "tool", "name": "edit", "id": "o2", "text": "src/server.ts\n+app.get('/health', (c) => c.json({\n+  service: 'beacon',\n+  status: 'ok',\n+}));" },
+        { "type": "result", "id": "o2", "text": "Edit applied successfully." },
+        { "type": "assistant", "text": "`GET /health` now returns:\n\n```json\n{ \"service\": \"beacon\", \"status\": \"ok\" }\n```" }
+      ]
+    },
+    {
+      "prompt": "Add a test for the status code and response body.",
+      "events": [
+        { "type": "tool", "name": "write", "id": "o3", "text": "src/server.test.ts\n+const response = await app.request('/health');\n+expect(response.status).toBe(200);\n+expect(await response.json()).toEqual({\n+  service: 'beacon', status: 'ok'\n+});" },
+        { "type": "result", "id": "o3", "text": "Wrote src/server.test.ts" },
+        { "type": "tool", "name": "bash", "id": "o4", "text": "npm test", "durationMs": 700 },
+        { "type": "result", "id": "o4", "text": "✓ GET /health returns 200\n✓ response identifies the service\n\n2 passed" },
+        { "type": "assistant", "text": "Both assertions pass: the endpoint returns **200** and the expected JSON body." }
+      ]
+    }
+  ]
+}
