@@ -40,6 +40,7 @@ export function toolInput(value) {
     if (path && typeof before === 'string' && typeof after === 'string') {
       return clean(`${path}\n${before.split('\n').map((line) => '- ' + line).join('\n')}\n${after.split('\n').map((line) => '+ ' + line).join('\n')}`);
     }
+    if (path && typeof input.content === 'string') return clean(`${path}\n${input.content}`);
     if (path && Object.keys(input).length === 1) return clean(path);
   }
   return contentText(input);

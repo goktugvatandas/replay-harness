@@ -17,10 +17,10 @@ function builder(harness, source) {
   let turn;
   return {
     session,
-    user(text) {
+    user(text, extra = {}) {
       text = clean(text).trim();
       if (!text) return;
-      turn = { prompt: text, events: [] };
+      turn = { prompt: text, events: [], ...extra };
       session.turns.push(turn);
     },
     event(type, text, extra = {}) {
@@ -223,7 +223,7 @@ function native(data, source) {
   for (const [i, turn] of data.turns.entries()) {
     if (typeof turn.prompt !== 'string' || !turn.prompt.trim()) throw new Error(`Turn ${i + 1} needs a nonempty prompt.`);
     if (!Array.isArray(turn.events)) throw new Error(`Turn ${i + 1} needs an events array.`);
-    b.user(turn.prompt);
+    b.user(turn.prompt, turn.instant === true ? { instant: true } : {});
     for (const event of turn.events) {
       if (!EVENT_TYPES.has(event.type)) throw new Error(`Unknown event type in turn ${i + 1}: ${event.type}.`);
       if (typeof event.text !== 'string') throw new Error(`Event text in turn ${i + 1} must be a string.`);

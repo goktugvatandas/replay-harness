@@ -6,8 +6,10 @@ import { filterSessions, loadDiscoveredSession } from './discovery.js';
 import { Playback, SPEEDS } from './playback.js';
 import { DEFAULT_TYPING_SPEED } from './typing.js';
 import { render } from './render.js';
-import { ansiColor, palette } from './themes.js';
+import { createControlServer, playbackStatus } from './control.js';
+import { baseBackground, setBackground } from './themes.js';
 import { clean, graphemes } from './text.js';
+import { runCue } from './cues.js';
 
 export function createState(sessions, options = {}) {
   return {
@@ -18,6 +20,7 @@ export function createState(sessions, options = {}) {
     importing: false, input: '', error: '', loading: false,
     filter: 'all', query: '', searching: false, discovering: false, discovered: false,
     discoveryCount: 0, discoveryErrors: [], sources: [], imported: [], discover: options.discover,
+    cues: options.cues ?? [], execLog: options.execLog, runCue: options.runCue ?? runCue, cueStatus: null, dirty: false,
   };
 }
 
@@ -58,7 +61,14 @@ async function openSelected(state) {
 
 export function openRecording(state, index = state.selected) {
   state.selected = index;
-  state.playback = new Playback(state.sessions[index], { speed: state.speed, timing: state.timing, typingSpeed: state.typingSpeed });
+  const session = state.sessions[index];
+  const onCue = (cue, turn) => state.runCue(cue, {
+    turn, session, log: state.execLog,
+    // A failure stays visible until the next prompt, even if a later cue succeeds.
+    onStatus: (status) => { if (!status.error && state.cueStatus?.error) return; state.cueStatus = status; state.dirty = true; },
+  });
+  state.playback = new Playback(session, { speed: state.speed, timing: state.timing, typingSpeed: state.typingSpeed, cues: state.cues, onCue });
+  state.cueStatus = null;
   state.theme = state.themeOverride ?? state.sessions[index].harness;
   state.view = 'player';
   state.scroll = 0;
@@ -151,10 +161,10 @@ export async function handleKey(state, str, key = {}, rows = 30) {
     if (key.name === 'pagedown') state.helpScroll = (state.helpScroll ?? 0) + Math.max(3, rows - 10);
     return;
   }
-  if (key.name === 'return' || str === ' ') { p.advance(); state.scroll = 0; }
+  if (key.name === 'return' || str === ' ') { if (p.advance()) state.cueStatus = null; state.scroll = 0; }
   if (str === 'p') p.togglePause();
   if (str === 'n') { p.skip(); state.scroll = 0; }
-  if (str === 'r') { p.reset(); state.scroll = 0; }
+  if (str === 'r') { p.reset(); state.scroll = 0; state.cueStatus = null; }
   if (str === '[') { p.seek(p.turnIndex - 1); state.scroll = 0; }
   if (str === ']') { p.seek(p.turnIndex + 1); state.scroll = 0; }
   if (str === 'f') state.present = !state.present;
@@ -171,6 +181,7 @@ export async function handleKey(state, str, key = {}, rows = 30) {
 export async function runApp(sessions, options = {}) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Interactive playback needs a terminal. Run this command in a terminal, or use --inspect / --list.');
   const state = createState(sessions, options);
+  setBackground(options.background);
   if (options.direct) openRecording(state, options.directIndex ?? 0);
   const input = process.stdin, output = process.stdout;
   let previous = [], timer, last = performance.now(), closed = false;
@@ -184,7 +195,7 @@ export async function runApp(sessions, options = {}) {
     let frame = force ? '\x1b[2J' : '';
     for (let i = 0; i < rows; i++) {
       const line = lines[i] ?? '';
-      if (force || previous[i] !== line) frame += `\x1b[${i + 1};1H${ansiColor(palette.background, true)}\x1b[2K${line}\x1b[0m`;
+      if (force || previous[i] !== line) frame += `\x1b[${i + 1};1H${baseBackground()}\x1b[2K${line}\x1b[0m`;
     }
     previous = lines;
     if (frame) output.write(frame);
@@ -194,6 +205,7 @@ export async function runApp(sessions, options = {}) {
     closed = true;
     state.discoveryAbort?.abort();
     clearInterval(timer);
+    control?.close();
     input.removeListener('keypress', onKey);
     output.removeListener('resize', onResize);
     process.removeListener('SIGINT', close);
@@ -209,10 +221,23 @@ export async function runApp(sessions, options = {}) {
       const pending = handleKey(state, str, key, output.rows || 24);
       if (!closed) draw();
       if (await pending === 'quit') { close(); return; }
-      if (!closed) draw();
+      if (!closed) { draw(); control?.notify(); }
     } catch (error) { close(); process.stderr.write(`Replay Harness: ${clean(error.message)}\n`); process.exitCode = 1; }
   }
   function onResize() { if (!closed) draw(true); }
+  const controlKeys = { advance: ['\r', { name: 'return' }], skip: ['n', {}], restart: ['r', {}], present: ['f', {}] };
+  const control = options.control ? createControlServer(options.control, {
+    getStatus: () => playbackStatus(state),
+    onCommand: async (command) => {
+      if (closed) return;
+      if (command === 'quit') { close(); return; }
+      if (state.view !== 'player') return;
+      const [str, key] = controlKeys[command];
+      await handleKey(state, str, key, output.rows || 24);
+      if (!closed) draw();
+    },
+  }) : null;
+  if (control) await control.ready;
   emitKeypressEvents(input);
   input.setRawMode(true);
   input.resume();
@@ -223,6 +248,7 @@ export async function runApp(sessions, options = {}) {
   process.on('exit', close);
   output.write('\x1b[?1049h\x1b[?25l\x1b[?7l');
   try {
+    if (options.autostart && state.view === 'player') { state.playback.advance(); control?.notify(); }
     draw(true);
     if (!options.direct && state.discover) {
       void refreshDiscovery(state).then(() => { if (!closed) draw(); });
@@ -238,6 +264,8 @@ export async function runApp(sessions, options = {}) {
           draw();
         }
         if (state.view === 'discovery' && state.discovering) draw();
+        if (state.dirty) { state.dirty = false; draw(); }
+        control?.notify();
       } catch (error) { close(); process.stderr.write(`Replay Harness: ${clean(error.message)}\n`); process.exitCode = 1; }
     }, 33);
     await done;

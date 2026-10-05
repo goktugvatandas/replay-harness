@@ -85,3 +85,41 @@ test('CLI validates flags and offers non-TTY inspection', () => {
   assert.match(cli(['--demo', 'missing']).stderr, /Choose a demo/);
   assert.match(cli([]).stderr, /needs a terminal/);
 });
+
+test('every harness look fits 80×24 and 160×45 through the whole recording', () => {
+  for (const [columns, rows] of [[80, 24], [160, 45]]) {
+    for (let i = 0; i < sessions.length; i++) {
+      const s = createState(sessions); openRecording(s, i);
+      for (const present of [false, true]) {
+        s.present = present;
+        while (s.playback.phase !== 'finished') {
+          s.playback.advance(); s.playback.tick(700);
+          for (const line of render(s, columns, rows)) assert.ok(width(line) <= columns, `${s.theme} ${columns}x${rows}: ${stripVTControlCharacters(line)}`);
+          s.playback.skip();
+        }
+        s.playback.reset();
+      }
+    }
+  }
+});
+
+test('Claude look renders inline tool calls, diffs and a prompt box', () => {
+  const s = createState(sessions, { present: true });
+  openRecording(s, sessions.findIndex((session) => session.harness === 'claude'));
+  while (s.playback.phase !== 'finished') { s.playback.advance(); s.playback.skip(); }
+  const screen = stripVTControlCharacters(render(s, 110, 60).join('\n'));
+  assert.match(screen, /● Update\(src\/components\/search\.tsx\)/);
+  assert.match(screen, /⎿  Updated src\/components\/search\.tsx with 1 addition and 1 removal/);
+  assert.match(screen, /● Bash\(npm test -- search\)/);
+  assert.match(screen, /╭─+╮/);
+  assert.match(screen, /\? for shortcuts/);
+});
+
+test('terminal background mode never paints the replay ground color', async () => {
+  const { setBackground, paint, palette } = await import('../src/themes.js');
+  const ground = `48;2;${palette.background.slice(1).match(/.{2}/g).map((h) => parseInt(h, 16)).join(';')}m`;
+  setBackground('terminal');
+  try { assert.ok(!paint('x').includes(ground)); assert.ok(paint('x').endsWith('\x1b[49m')); }
+  finally { setBackground('theme'); }
+  assert.ok(paint('x').includes(ground));
+});

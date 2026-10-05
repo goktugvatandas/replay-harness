@@ -7,6 +7,8 @@ import { runApp } from '../src/app.js';
 import { clean } from '../src/text.js';
 import { discoverSessions, discoveryRoots } from '../src/discovery.js';
 import { DEFAULT_TYPING_SPEED } from '../src/typing.js';
+import { parseCue, validateCues, describeCue } from '../src/cues.js';
+import { BACKGROUNDS } from '../src/themes.js';
 
 const help = `
   REPLAY HARNESS
@@ -23,6 +25,15 @@ const help = `
     --theme <name>        Override the harness visual identity
     --present            Start with replay controls hidden; f toggles them
     --timing <mode>      natural (default) or recorded (gaps capped at 5 seconds)
+    --bg <mode>          theme (default) or terminal (keep the terminal's own background)
+    --exec [TURN[@TOOL]:]SCRIPT
+                         Run your script on cue. TURN is 1-based or "last" (default).
+                         Without @TOOL it runs when the turn finishes; with @TOOL it runs
+                         as that tool's recorded result appears. Repeatable.
+    --exec-log <file>    Append cue script stdout/stderr to a file (default: discarded)
+    --control <socket>   Listen on a unix socket for remote commands (advance, skip,
+                         restart, present, status, quit); status is sent as JSON lines
+    --autostart          Start typing the first prompt as soon as the recording opens
     --session-dir <path> Also discover sessions recursively in this directory
     --inspect            Print session metadata without opening the TUI
     --list               Discover and list local sessions without opening the TUI
@@ -40,6 +51,7 @@ const help = `
   Supported inputs: Codex, Claude Code, Pi, OpenCode, Gemini CLI,
   generic role/content chat JSON, and editable replay scripts.
   Recordings are only displayed. No agent, tool, or network request runs.
+  Only scripts you pass with --exec are ever executed.
 `;
 
 async function main() {
@@ -51,6 +63,8 @@ async function main() {
       'typing-speed': { type: 'string', default: String(DEFAULT_TYPING_SPEED) }, theme: { type: 'string' },
       present: { type: 'boolean' }, timing: { type: 'string', default: 'natural' },
       'session-dir': { type: 'string' }, inspect: { type: 'boolean' }, list: { type: 'boolean' },
+      bg: { type: 'string', default: 'theme' }, exec: { type: 'string', multiple: true, default: [] }, 'exec-log': { type: 'string' },
+      control: { type: 'string' }, autostart: { type: 'boolean' },
     },
   });
   if (values.help) { process.stdout.write(help); return; }
@@ -62,6 +76,8 @@ async function main() {
   if (!Number.isFinite(typingSpeed) || typingSpeed < 1 || typingSpeed > 1000) throw new Error('Typing speed must be between 1 and 1000 characters per second.');
   if (values.theme && !HARNESSES.includes(values.theme)) throw new Error(`Unknown theme. Choose ${HARNESSES.join(', ')}.`);
   if (!['natural', 'recorded'].includes(values.timing)) throw new Error('Timing must be natural or recorded.');
+  if (!BACKGROUNDS.includes(values.bg)) throw new Error('Background must be theme or terminal.');
+  const cues = values.exec.map(parseCue);
   if (values.demo && !HARNESSES.filter((h) => h !== 'generic').includes(values.demo)) throw new Error('Choose a demo: codex, claude, pi, opencode, gemini.');
   const sessions = [];
   let directIndex = 0;
@@ -72,10 +88,11 @@ async function main() {
     if (!sessions.length) throw new Error('This bundled demo is missing.');
   }
   if (positionals[0]) { directIndex = sessions.length; sessions.push(await loadSession(positionals[0])); }
+  if (sessions.length) validateCues(cues, sessions[directIndex]);
   if (values.inspect) {
     if (!positionals[0] && !values.demo) throw new Error('Use --inspect with a session file or --demo <name>.');
     const s = sessions[directIndex];
-    process.stdout.write(JSON.stringify({ title: s.title, harness: s.harness, model: s.model, cwd: s.cwd, turns: s.turns.length, events: s.eventCount, warnings: s.warnings }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ title: s.title, harness: s.harness, model: s.model, cwd: s.cwd, turns: s.turns.length, events: s.eventCount, cues: cues.map(describeCue), warnings: s.warnings }, null, 2) + '\n');
     return;
   }
   const roots = discoveryRoots({ extraDirectories: values['session-dir'] ? [values['session-dir']] : [] });
@@ -87,7 +104,7 @@ async function main() {
     for (const error of result.errors) process.stderr.write(`Discovery: ${clean(error)}\n`);
     return;
   }
-  await runApp(sessions, { speed, typingSpeed, theme: values.theme, present: values.present, timing: values.timing, direct: Boolean(positionals[0] || values.demo), directIndex, discover });
+  await runApp(sessions, { speed, typingSpeed, theme: values.theme, present: values.present, timing: values.timing, background: values.bg, cues, execLog: values['exec-log'], control: values.control, autostart: values.autostart, direct: Boolean(positionals[0] || values.demo), directIndex, discover });
 }
 
 main().catch((error) => { process.stderr.write(`Replay Harness: ${clean(error.message)}\n`); process.exitCode = 1; });

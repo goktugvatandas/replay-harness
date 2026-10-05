@@ -129,8 +129,71 @@ node bin/replay-harness.js session.jsonl \
 - **`--timing recorded`** uses timestamp gaps between agent events, capped at five seconds before the speed multiplier, plus the text reveal time. It approximates the original rhythm; it is not a frame-accurate terminal capture.
 - **`--present`** hides replay controls, progress, and queued-prompt hints. The same keyboard controls still work. Press f to bring them back.
 - **`--theme`** selects `codex`, `claude`, `pi`, `opencode`, `gemini`, or `generic`. The default comes from the recording.
+- **`--bg terminal`** keeps your terminal's own background instead of painting the replay's dark ground. Use it with translucent terminals, or when a cue script changes the terminal theme live.
 
 Use a true-color terminal, a dark background, and a monospace font with Unicode support. The layout adapts down to 48 columns × 16 rows; 100 × 32 or larger gives tool output more room.
+
+## Run a script on cue
+
+A replay only shows what an agent did. To make the change really happen on screen, hand the player your own script with `--exec`. It runs at the moment the recording reaches it, so the audience sees the agent finish and the result land together.
+
+```sh
+# Run apply-theme.sh as the last turn's recorded Edit result appears
+node bin/replay-harness.js session.jsonl --present --exec last@Edit:./apply-theme.sh
+
+# Run one script when turn 2 finishes and another at the end of the recording
+node bin/replay-harness.js session.jsonl --exec 2:./step-two.sh --exec ./finale.sh
+```
+
+The spec is `[TURN[@TOOL]:]SCRIPT`:
+
+| Part | Meaning |
+| --- | --- |
+| `TURN` | 1-based turn number, or `last`. Defaults to `last`. |
+| `@TOOL` | Optional recorded tool name, matched case-insensitively (`Edit`, `Write`, `Bash`, `exec_command`, …). The script runs as that tool's first result appears in the turn. Without it, the script runs when the turn finishes. |
+| `SCRIPT` | A local file. Executable files run directly; anything else runs with `/bin/sh`. |
+
+- Each cue runs at most once per pass through its turn. Restarting with **r** or cueing the turn again re-arms it, so rehearsals behave like the real thing.
+- **n** (finish this turn) still runs the turn's cues. A tool cue whose tool never appears runs when the turn finishes.
+- Scripts start detached in the current directory with `REPLAY_TURN`, `REPLAY_TOOL`, and `REPLAY_SESSION` set. Their output is discarded unless you pass `--exec-log <file>`.
+- A failed start or nonzero exit shows a short message above the composer, even in presentation mode. Successful runs are only mentioned outside presentation mode.
+- Cues are checked at startup: the script must exist and the turn must be in range. In session discovery, cues that do not fit the opened recording are ignored.
+
+Cues come only from the command line. Nothing in a recording can add, change, or trigger a script.
+
+On Omarchy, a script like this makes a recorded "switch my desktop to Tokyo Night" session actually do it:
+
+```sh
+#!/bin/sh
+# apply-theme.sh
+omarchy-theme-set "Tokyo Night"
+```
+
+```sh
+node bin/replay-harness.js theme-session.jsonl --present --bg terminal --exec last@Bash:./apply-theme.sh
+```
+
+With `--bg terminal`, the replay window itself picks up the new colors along with the rest of the desktop.
+
+## Remote control
+
+A show-runner, a presentation clicker, or a script can drive playback over a local unix socket:
+
+```sh
+node bin/replay-harness.js session.jsonl --present --control /tmp/replay.sock --autostart
+```
+
+Send one command per line: `advance` (same as Enter), `skip` (n), `restart` (r), `present` (f), `status`, or `quit`. Every client gets a JSON status line when it connects, after `status`, and whenever the playback phase or turn changes:
+
+```json
+{"phase":"complete","turn":1,"turns":2,"session":"/path/to/session.jsonl"}
+```
+
+`phase` is `ready`, `typing`, `submitting`, `playing`, `complete` (waiting for the next prompt) or `finished`. `advance` is ignored while a turn is running, like Enter. A stale socket file is replaced at startup and the socket is removed on exit. `--autostart` begins typing the first prompt as soon as the recording opens.
+
+```sh
+printf 'advance\n' | socat - UNIX-CONNECT:/tmp/replay.sock
+```
 
 ## Write an editable demo
 
@@ -176,7 +239,7 @@ Save this as `demo.json` and pass it to the player:
 
 Events can be `assistant`, `thinking`, `tool`, or `result`. Every event needs a string `text`. Use matching `id` values to link tools to results, `name` for the displayed tool name, and `error: true` on a failed result. Optional `delayMs` and `durationMs` override generated timing; both are scaled by the playback speed. An optional `at` timestamp is used in recorded timing mode.
 
-Each turn has exactly one nonempty `prompt` and an `events` array. Add another turn to create the next presenter cue. Nothing inside a script is executed.
+Each turn has exactly one nonempty `prompt` and an `events` array. Add `"instant": true` to a turn whose prompt should appear whole instead of being typed, like a prompt handed to the agent by a notification or a script. Add another turn to create the next presenter cue. Nothing inside a replay script is executed; only scripts you pass with `--exec` run.
 
 ## How it works
 
@@ -193,7 +256,7 @@ Virtual playback clock → typing → output → wait for your cue
 Harness theme + terminal renderer
 ```
 
-The runtime uses Node's filesystem, readline, terminal output, and optional SQLite APIs. It contains no agent integration, shell execution, network client, or recording write path. Terminal escape sequences in imported content are stripped before display.
+The runtime uses Node's filesystem, readline, terminal output, and optional SQLite APIs. It contains no agent integration, network client, or recording write path. The only process it ever starts is a script you pass with `--exec`. Terminal escape sequences in imported content are stripped before display.
 
 The visual identities are recognizable approximations, not exact replicas of every harness version. Session formats evolve; unsupported event kinds and metadata are omitted. This release does not reproduce interactive approval dialogs, image rendering, or every extension/subagent UI. Bundled conversations are authored demo scripts; their tool results are example content.
 
@@ -214,7 +277,9 @@ src/playback.js        Deterministic playback state machine
 src/typing.js          Repeatable keystroke timing and natural pauses
 src/app.js             Keyboard controls and terminal lifecycle
 src/render.js          Discovery, transcript, composer, and help views
-src/themes.js          Harness palettes and markers
+src/themes.js          Harness palettes, markers, and background mode
+src/control.js         Unix socket remote control
+src/cues.js            --exec parsing, validation, and detached script runs
 src/text.js            Text sanitization, graphemes, terminal cell widths
 examples/              Five offline demo recordings
 test/                  Built-in Node test suite

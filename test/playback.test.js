@@ -184,3 +184,19 @@ test('changing typing pace and playback speed scales pauses along with keystroke
   assert.equal(reference.prompt, adjusted.prompt);
   assert.equal(reference.phase, adjusted.phase);
 });
+
+test('instant turns show the whole prompt without a typing delay', () => {
+  const session = parseSession(JSON.stringify({ version: 1, harness: 'claude', turns: [
+    { prompt: 'Pasted from a crash notification', instant: true, events: [{ type: 'assistant', text: 'ok' }] },
+    { prompt: 'typed', events: [{ type: 'assistant', text: 'ok' }] },
+  ] }));
+  assert.equal(session.turns[0].instant, true);
+  assert.equal(session.turns[1].instant, undefined);
+  const p = new Playback(session);
+  p.advance();
+  p.tick(1);
+  assert.equal(p.phase, 'submitting');
+  assert.equal(p.prompt, 'Pasted from a crash notification');
+  p.tick(400);
+  assert.equal(p.phase, 'playing');
+});

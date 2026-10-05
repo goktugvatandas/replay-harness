@@ -63,30 +63,121 @@ function welcome(session, theme, columns) {
   return [...lines, '', text(theme.tagline, c.muted), ''];
 }
 
-export function transcriptLines(playback, theme, columns, expanded) {
+const SHELL_TOOLS = new Set(['bash', 'shell', 'exec_command', 'local_shell', 'run_shell_command', 'terminal']);
+const EDIT_TOOLS = new Set(['edit', 'multiedit', 'update', 'str_replace_based_edit_tool', 'str_replace', 'replace', 'notebookedit']);
+const WRITE_TOOLS = new Set(['write', 'write_file', 'create']);
+const CLAUDE_NAMES = { edit: 'Update', multiedit: 'Update', grep: 'Search', glob: 'Search', webfetch: 'Fetch' };
+const SUMMARY_KEYS = ['file_path', 'path', 'notebook_path', 'pattern', 'command', 'cmd', 'url', 'query', 'description', 'prompt'];
+
+// Splits a recorded tool call into a one-line summary and its remaining body.
+export function toolParts(event) {
+  const raw = event.text ?? '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const input = JSON.parse(trimmed);
+      if (input && typeof input === 'object' && !Array.isArray(input)) {
+        const summary = SUMMARY_KEYS.map((key) => input[key]).find((v) => typeof v === 'string') ?? Object.values(input).find((v) => typeof v === 'string') ?? '';
+        const content = typeof input.content === 'string' ? input.content : '';
+        return { summary: summary.split('\n')[0], body: content ? content.split('\n') : [], path: input.file_path ?? input.path ?? '' };
+      }
+    } catch { /* not JSON: fall through to plain text */ }
+  }
+  const lines = raw.split('\n');
+  if (lines.length <= 4 && lines.every((line) => /^[\w.-]+: \S/.test(line))) return { summary: lines.join(', '), body: [], path: '' };
+  return { summary: lines[0], body: lines.slice(1), path: lines[0] };
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const relative = (path, cwd) => cwd && path.startsWith(cwd.replace(/\/$/, '') + '/') ? path.slice(cwd.replace(/\/$/, '').length + 1) : path;
+
+function inlineResult(event, tool, theme, columns, expanded, cwd) {
+  const lines = [];
+  const first = text('  ⎿  ', c.faint), rest = '     ';
+  const inner = columns - 5;
+  const name = (tool?.name ?? event.name ?? '').toLowerCase();
+  const parts = tool ? toolParts(tool) : undefined;
+  if (parts) { parts.path = relative(parts.path, cwd); parts.summary = relative(parts.summary, cwd); }
+  while (parts?.body.length && !parts.body.at(-1).trim()) parts.body.pop();
+  const diff = parts?.body.filter((line) => /^[+-]/.test(line)) ?? [];
+  if (!event.error && EDIT_TOOLS.has(name) && diff.length) {
+    const added = diff.filter((line) => line.startsWith('+')).length, removed = diff.length - added;
+    const summary = [added && plural(added, 'addition'), removed && plural(removed, 'removal')].filter(Boolean).join(' and ');
+    lines.push(first + text(truncate(`Updated ${parts.path || parts.summary} with ${summary}`, inner), c.muted));
+    const shown = expanded ? diff : diff.slice(0, 10);
+    for (const line of shown) {
+      const sign = line[0], body = line.slice(1).replace(/^ /, '');
+      const tint = sign === '+' ? c.added : c.removed;
+      const cell = truncate(`${sign} ${body}`, inner - 1);
+      lines.push(rest + paint(pad(' ' + cell, inner), sign === '+' ? c.green : c.red, { background: tint }));
+    }
+    if (shown.length < diff.length) lines.push(rest + text(`… +${diff.length - shown.length} lines (x to expand)`, c.faint));
+    return lines;
+  }
+  if (!event.error && WRITE_TOOLS.has(name) && parts?.body.length) {
+    lines.push(first + text(truncate(`Wrote ${plural(parts.body.length, 'line')} to `, inner), c.muted) + text(truncate(parts.path || parts.summary, Math.max(4, inner - 22)), c.text, true));
+    const shown = parts.body.slice(0, expanded ? parts.body.length : 4);
+    lines.push(...shown.map((line) => rest + text(truncate(line, inner), c.muted)));
+    if (shown.length < parts.body.length) lines.push(rest + text(`… +${parts.body.length - shown.length} lines (x to expand)`, c.faint));
+    return lines;
+  }
+  const output = event.text.trim() ? wrap(event.text.replace(/\n+$/, ''), inner) : ['(No content)'];
+  const shown = expanded ? output : output.slice(0, 5);
+  lines.push(...shown.map((line, i) => (i === 0 ? first : rest) + text(line, event.error ? c.red : c.muted)));
+  if (shown.length < output.length) lines.push(rest + text(`… +${output.length - shown.length} lines (x to expand)`, c.faint));
+  return lines;
+}
+
+function promptLines(prompt, theme, columns) {
+  if (!theme.promptBand) {
+    return wrapWords(prompt, columns - 4).map((line, i) => text(i === 0 ? `${theme.prompt} ` : '  ', theme.accent, true) + text(line, c.text, true));
+  }
+  return wrapWords(prompt, columns - 4).map((line, i) => paint(pad(`${i === 0 ? theme.prompt : ' '} ${line}`, columns), c.text, { background: c.band }));
+}
+
+export function transcriptLines(playback, theme, columns, expanded, now = Date.now()) {
   const lines = [];
   for (const turn of playback.visibleTurns()) {
-    const prompt = wrapWords(turn.prompt, columns - 4);
-    lines.push(...prompt.map((line, i) => text(i === 0 ? `${theme.prompt} ` : '  ', theme.accent, true) + text(line, c.text, true)), '');
+    lines.push(...promptLines(turn.prompt, theme, columns), '');
     // Match only results already visible: never preview an unseen tool outcome.
     const results = new Map(turn.events.filter((e) => e.type === 'result' && e.id).map((e) => [e.id, e]));
+    const tools = new Map(turn.events.filter((e) => e.type === 'tool' && e.id).map((e) => [e.id, e]));
     for (const event of turn.events) {
       if (event.type === 'assistant') {
-        lines.push(...markdown(event.text, columns - 4).map((line, i) => (i === 0 ? text(`${theme.bullet} `, theme.accent) : '  ') + line), '');
+        const bullet = theme.toolStyle === 'inline' ? c.text : theme.accent;
+        lines.push(...markdown(event.text, columns - 4).map((line, i) => (i === 0 ? text(`${theme.bullet} `, bullet) : '  ') + line), '');
       } else if (event.type === 'thinking') {
         const thought = expanded ? event.text : event.text.split('\n')[0];
         const rendered = markdown(thought, columns - 4, c.muted);
         lines.push(...rendered.map((line, i) => (i === 0 ? text('∴ ', c.faint) : '  ') + line), '');
+      } else if (event.type === 'tool' && theme.toolStyle === 'inline') {
+        const result = event.id ? results.get(event.id) : undefined;
+        const color = result ? (result.error ? c.failure : c.success) : Math.floor(now / 500) % 2 ? c.faint : c.muted;
+        const key = (event.name || 'Tool').toLowerCase();
+        const name = CLAUDE_NAMES[key] ?? event.name ?? 'Tool';
+        const summary = relative(toolParts(event).summary, playback.session.cwd);
+        const args = summary ? text('(' + truncate(summary, Math.max(4, columns - width(name) - 5)) + ')', c.text) : '';
+        lines.push(text('● ', color) + text(name, c.text, true) + args);
+        if (!result) lines.push('');
       } else if (event.type === 'tool') {
         const result = event.id ? results.get(event.id) : undefined;
         const marker = result?.error ? '×' : result ? theme.tool : '•';
-        const title = `${event.name || 'Tool'}`;
-        lines.push(text(`${marker} `, result?.error ? c.red : theme.accent) + text(truncate(title, columns - width(marker) - 1), c.text, true));
+        const shell = theme.toolStyle === 'codex' && SHELL_TOOLS.has((event.name || '').toLowerCase());
         const command = wrap(event.text, columns - 5);
-        const shown = expanded ? command : command.slice(0, 4);
+        const title = shell ? command[0] ?? '' : `${event.name || 'Tool'}`;
+        const body = shell ? command.slice(1) : command;
+        if (theme.toolStyle === 'codex') {
+          const verb = shell ? (result?.error ? 'Failed ' : 'Ran ') : '';
+          lines.push(text('• ', result?.error ? c.red : result ? theme.accent : c.muted) + text(verb, c.text, true) + text(truncate(title, columns - 8), c.text, !shell));
+        }
+        else lines.push(text(`${marker} `, result?.error ? c.red : theme.accent) + text(truncate(title, columns - width(marker) - 1), c.text, true));
+        const shown = expanded ? body : body.slice(0, 4);
         lines.push(...shown.map((line) => text('  │ ', c.faint) + text(line, line.startsWith('+') ? c.green : line.startsWith('-') ? c.red : c.muted)));
-        if (shown.length < command.length) lines.push(text(`  │ … ${command.length - shown.length} more lines`, c.faint));
-        lines.push('');
+        if (shown.length < body.length) lines.push(text(`  │ … ${body.length - shown.length} more lines`, c.faint));
+        if (!(theme.toolStyle === 'codex' && result)) lines.push('');
+      } else if (event.type === 'result' && theme.toolStyle === 'inline') {
+        lines.push(...inlineResult(event, event.id ? tools.get(event.id) : undefined, theme, columns, expanded, playback.session.cwd), '');
       } else if (event.type === 'result') {
         const output = wrap(event.text, columns - 5);
         const shown = expanded ? output : output.slice(0, 6);
@@ -127,28 +218,47 @@ export function renderPlayer(state, columns, rows, now = Date.now()) {
   const current = p.phase === 'complete' ? p.turnIndex + 2 : p.turnIndex + 1;
   const top = state.present ? [] : [row(text('◉ REPLAY HARNESS', theme.accent, true), text(`${mode}  ·  ${p.speed}×  ·  ${current}/${p.session.turns.length}`, c.muted), inner), rule(inner)];
   const bottom = [];
-  let status = '';
+  let status = '', statusColor = p.paused ? c.gold : theme.accent;
   if (p.paused) status = 'Ⅱ Paused';
+  else if (p.phase === 'playing' && theme.spinner) {
+    const glyph = theme.spinner[Math.floor(now / theme.spinnerMs) % theme.spinner.length];
+    const verb = theme.verbs[p.turnIndex % theme.verbs.length];
+    status = `${glyph} ${verb}… (${Math.floor(p.workElapsed / 1000)}s · esc to interrupt)`;
+  }
   else if (p.phase === 'playing') status = `${spinner[Math.floor(now / 90) % spinner.length]} ${theme.thinking}…`;
+  else if (state.cueStatus && (state.cueStatus.error || !state.present)) { status = state.cueStatus.text; statusColor = state.cueStatus.error ? c.red : c.muted; }
   else if (p.phase === 'finished') status = state.present ? '' : '✓ Session complete · r to replay';
   else if (p.phase === 'complete') status = state.present ? '' : inner < 52 ? '✓ Turn complete · Enter / Space to continue' : '✓ Turn complete · Enter or Space for next prompt';
   else if (p.phase === 'ready') status = state.present ? '' : 'Press Enter or Space to begin';
-  if (state.scroll > 0) status = `↑ Reviewing history · ${state.scroll} lines up · End to follow`;
-  bottom.push(text(truncate(status || ' ', inner), p.paused ? c.gold : theme.accent));
-  const editorRule = theme === themes.pi || theme === themes.opencode ? text('─'.repeat(inner), theme.accent) : rule(inner);
-  bottom.push(editorRule);
+  if (state.scroll > 0) { status = `↑ Reviewing history · ${state.scroll} lines up · End to follow`; statusColor = theme.accent; }
+  bottom.push(text(truncate(status || ' ', inner), statusColor));
   const prompt = p.prompt;
-  const promptLines = wrapWords(prompt, inner - 4);
-  const visible = promptLines.slice(-Math.min(3, Math.max(1, rows - 12)));
   const caret = text(p.caretVisible ? '▌' : ' ', theme.accent);
-  if (p.composing) bottom.push(...visible.map((line, i) => text(i === 0 ? `${theme.prompt} ` : '  ', theme.accent) + text(line) + (i === visible.length - 1 ? caret : '')));
-  else bottom.push(text(`${theme.prompt} `, theme.accent) + text(p.active ? '' : state.present ? ' ' : p.phase === 'finished' ? 'End of recording' : 'Your next prompt is queued', c.faint) + (p.active ? '' : text(' ▏', theme.accent)));
-  bottom.push(editorRule);
+  const idle = p.active ? '' : state.present ? ' ' : p.phase === 'finished' ? 'End of recording' : 'Your next prompt is queued';
+  if (theme.promptBox) {
+    const content = inner - 4;
+    const promptLines = wrapWords(prompt, content - 3);
+    const visible = promptLines.slice(-Math.min(3, Math.max(1, rows - 12)));
+    const edge = (line) => text('│ ', c.line) + pad(line, content) + text(' │', c.line);
+    bottom.push(text('╭' + '─'.repeat(inner - 2) + '╮', c.line));
+    if (p.composing) bottom.push(...visible.map((line, i) => edge(text(i === 0 ? `${theme.prompt} ` : '  ', c.text) + text(line) + (i === visible.length - 1 ? caret : ''))));
+    else bottom.push(edge(text(`${theme.prompt} `, c.text) + (p.active ? '' : text('▌', c.faint) + text(idle.trim() ? ' ' + idle : '', c.faint))));
+    bottom.push(text('╰' + '─'.repeat(inner - 2) + '╯', c.line));
+  } else {
+    const editorRule = theme === themes.pi || theme === themes.opencode ? text('─'.repeat(inner), theme.accent) : rule(inner);
+    bottom.push(editorRule);
+    const promptLines = wrapWords(prompt, inner - 4);
+    const visible = promptLines.slice(-Math.min(3, Math.max(1, rows - 12)));
+    if (p.composing) bottom.push(...visible.map((line, i) => text(i === 0 ? `${theme.prompt} ` : '  ', theme.accent) + text(line) + (i === visible.length - 1 ? caret : '')));
+    else bottom.push(text(`${theme.prompt} `, theme.accent) + text(idle, c.faint) + (p.active ? '' : text(' ▏', theme.accent)));
+    bottom.push(editorRule);
+  }
+  const presentLeft = theme.promptBox ? text('? for shortcuts', c.muted) : text(truncate(p.session.cwd || '~/demo', Math.floor(inner / 2)), c.faint);
   bottom.push(state.present
-    ? row(text(truncate(p.session.cwd || '~/demo', Math.floor(inner / 2)), c.faint), text(truncate(p.session.model || theme.name, Math.floor(inner / 2) - 2), c.muted), inner)
+    ? row(presentLeft, text(truncate(p.session.model || theme.name, Math.floor(inner / 2) - 2), c.muted), inner)
     : row(text('enter next  p pause  +/− speed  ? help', c.muted), text('f present  esc discovery', c.faint), inner));
   const viewport = Math.max(1, rows - top.length - bottom.length - 2);
-  const all = state.help ? help(inner) : [...welcome(p.session, theme, inner), ...transcriptLines(p, theme, inner, state.expanded)];
+  const all = state.help ? help(inner) : [...welcome(p.session, theme, inner), ...transcriptLines(p, theme, inner, state.expanded, now)];
   const maxScroll = Math.max(0, all.length - viewport);
   state.scroll = Math.min(state.scroll, maxScroll);
   if (state.help) state.helpScroll = Math.min(state.helpScroll ?? 0, maxScroll);
