@@ -50,7 +50,9 @@ test('presentation mode hides replay labels and preserves harness identity', () 
   for (let i = 0; i < sessions.length; i++) {
     const s = createState(sessions, { present: true }); openRecording(s, i);
     const screen = stripVTControlCharacters(render(s, 100, 32).join('\n'));
-    assert.ok(screen.includes(themes[s.theme].name));
+    // OpenCode's home screen shows its pixel logo, not its name: check its own marks instead.
+    if (s.theme === 'opencode') assert.ok(screen.includes('Build ·') && screen.includes(themes.opencode.version));
+    else assert.ok(screen.includes(themes[s.theme].name));
     assert.ok(!screen.includes('REPLAY HARNESS'));
     assert.ok(!screen.includes('next prompt is queued'));
   }

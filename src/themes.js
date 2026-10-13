@@ -13,7 +13,7 @@ export const themes = {
   },
   opencode: {
     name: 'opencode', vendor: 'OpenCode', accent: '#bfadeb', prompt: '┃', bullet: '▪',
-    thinking: 'Thinking', tool: '⬝', model: 'Recorded model',
+    thinking: 'Thinking', tool: '⬝', model: 'Recorded model', toolStyle: 'opencode', agent: 'Build', version: '1.19.0',
     logo: [' ┌─┐┌─┐', ' │ ││  ', ' └─┘└─┘'], tagline: 'Build with any model.',
   },
   pi: {

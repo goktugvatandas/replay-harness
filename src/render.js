@@ -1,6 +1,7 @@
 import { themes, palette as c, paint } from './themes.js';
 import { clean, wrap, wrapWords, truncate, width } from './text.js';
 import { filterSessions } from './discovery.js';
+import { renderOpenCode } from './opencode.js';
 
 const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const text = (s, color = c.text, bold = false) => paint(s, color, { bold });
@@ -213,6 +214,7 @@ function help(columns) {
 export function renderPlayer(state, columns, rows, now = Date.now()) {
   const p = state.playback;
   const theme = themes[state.theme ?? p.session.harness];
+  if (theme.toolStyle === 'opencode' && !state.help) return renderOpenCode(state, columns, rows, now, theme);
   const inner = columns - 4;
   const mode = p.paused ? 'PAUSED' : p.active ? 'PLAYING' : p.phase === 'finished' ? 'COMPLETE' : 'READY';
   const current = p.phase === 'complete' ? p.turnIndex + 2 : p.turnIndex + 1;

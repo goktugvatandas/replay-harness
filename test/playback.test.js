@@ -200,3 +200,21 @@ test('instant turns show the whole prompt without a typing delay', () => {
   p.tick(400);
   assert.equal(p.phase, 'playing');
 });
+
+test('cue "start" and live tools fire their cues as the tool starts; live input streams', async () => {
+  const { parseSession } = await import('../src/session.js');
+  const session = parseSession(JSON.stringify({ version: 1, harness: 'opencode', turns: [{ prompt: 'go', instant: true, events: [
+    { type: 'tool', name: 'bash', id: 'a', text: 'theme', cue: 'start', delayMs: 0, durationMs: 1000 },
+    { type: 'result', id: 'a', text: '', delayMs: 0 },
+    { type: 'tool', name: 'write', id: 'b', text: 'file\n0123456789', live: true, delayMs: 0, durationMs: 1000 },
+  ] }] }));
+  const fired = [];
+  const p = new Playback(session, { cues: [{ turn: 1, tool: 'bash', path: 'x' }, { turn: 1, tool: 'write', path: 'y' }], onCue: (cue) => fired.push(cue.path) });
+  p.advance();
+  p.tick(400); p.tick(10);
+  assert.deepEqual(fired, ['x']); // at the start of the bash call, before its result
+  p.tick(1000); p.tick(10); p.tick(500);
+  assert.deepEqual(fired, ['x', 'y']);
+  const live = p.visibleTurns()[0].events.at(-1);
+  assert.ok(live.text.length > 0 && live.text.length < 'file\n0123456789'.length); // half written
+});

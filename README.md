@@ -237,7 +237,7 @@ Save this as `demo.json` and pass it to the player:
 }
 ```
 
-Events can be `assistant`, `thinking`, `tool`, or `result`. Every event needs a string `text`. Use matching `id` values to link tools to results, `name` for the displayed tool name, and `error: true` on a failed result. Optional `delayMs` and `durationMs` override generated timing; both are scaled by the playback speed. An optional `at` timestamp is used in recorded timing mode.
+Events can be `assistant`, `thinking`, `tool`, or `result`. Every event needs a string `text`. Use matching `id` values to link tools to results, `name` for the displayed tool name, and `error: true` on a failed result. Optional `delayMs` and `durationMs` override generated timing; both are scaled by the playback speed. An optional `at` timestamp is used in recorded timing mode. On a `tool` event, `"live": true` writes its text out over `durationMs` (like code being typed into a file) and fires its `--exec` cues as it starts; `"cue": "start"` fires the cues as it starts without typing it out, so what a command does on screen is done before the agent reports it. OpenCode sessions render in OpenCode's own look (home screen, prompt box, tool panels).
 
 Each turn has exactly one nonempty `prompt` and an `events` array. Add `"instant": true` to a turn whose prompt should appear whole instead of being typed, like a prompt handed to the agent by a notification or a script. Add another turn to create the next presenter cue. Nothing inside a replay script is executed; only scripts you pass with `--exec` run.
 

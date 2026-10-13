@@ -237,6 +237,12 @@ function native(data, source) {
       }
       if (timestamp(event.at) !== undefined) extra.at = timestamp(event.at);
       if (event.error) extra.error = true;
+      // live: a tool call written out as it plays (its input streams over durationMs), and its
+      // cues fire as it starts, so something on screen can happen alongside it.
+      if (event.live === true) extra.live = true;
+      // cue: "start" fires a tool's cues as it starts (not when its result appears), so what it
+      // does on screen is done by the time the agent reports it.
+      if (event.cue === 'start') extra.cue = 'start';
       b.event(event.type, event.text, extra);
     }
   }

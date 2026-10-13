@@ -100,7 +100,7 @@ export class Playback {
 
   eventStart(index) {
     const event = this.turn.events[index];
-    if (event.type !== 'result') return;
+    if (event.type !== 'result' && !(event.type === 'tool' && (event.live || event.cue === 'start'))) return;
     const name = this.toolNames[this.turnIndex][index];
     for (const cue of this.cues) if (cue.index === this.turnIndex && cue.tool && cue.tool.toLowerCase() === name) this.fire(cue);
   }
@@ -179,7 +179,8 @@ export class Playback {
     const events = this.turn.events.slice(0, this.eventIndex).map((event) => ({ ...event, complete: true }));
     if (this.phase === 'playing' && this.eventStarted) {
       const event = this.turn.events[this.eventIndex];
-      events.push({ ...event, complete: false, text: event.type === 'tool' ? event.text : this.eventChars[this.turnIndex][this.eventIndex].slice(0, this.eventLength).join('') });
+      const streamed = event.type !== 'tool' || event.live;
+      events.push({ ...event, complete: false, text: streamed ? this.eventChars[this.turnIndex][this.eventIndex].slice(0, this.eventLength).join('') : event.text });
     }
     turns.push({ prompt: this.turn.prompt, events, complete: !this.active });
     return turns;
